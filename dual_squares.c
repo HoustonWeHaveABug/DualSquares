@@ -124,7 +124,7 @@ void dual_squares(int x, int y, int backup_start, int symmetric, int singles_n) 
 		}
 		if (singles_n < singles_max || (counter1 == 1 && counter2 == 0)) {
 			int i;
-			printf("Singles %d\n", singles_n);
+			printf("Singles %d Time %us\n", singles_n, (unsigned)time(NULL)-time0);
 			fflush(stdout);
 			if (singles_n < singles_max) {
 				singles_max = singles_n;
@@ -160,17 +160,17 @@ void dual_squares(int x, int y, int backup_start, int symmetric, int singles_n) 
 		}
 		return;
 	}
+	if (x <= y) {
+		backup_row(y, x, y, backup_start);
+	}
+	else {
+		backup_column(x, y, x-1, backup_start);
+	}
 	if (singles_max == 0) {
 		if (active[y*order+x] < VALUE_ALL) {
-			choose_cell(x, y, backup_start, symmetric, singles_n, active[y*order+x], 0);
+			choose_cell(x, y, backup_start, symmetric, singles_n, active[y*order+x], 1);
 		}
 		else if (active[y*order+x] == VALUE_ALL) {
-			if (x <= y) {
-				backup_row(y, x, y, backup_start);
-			}
-			else {
-				backup_column(x, y, x-1, backup_start);
-			}
 			active[y*order+x] = VALUE_X;
 			choose_cell(x, y, backup_start, symmetric, singles_n, VALUE_X, 1);
 			if (x <= y) {
@@ -181,12 +181,6 @@ void dual_squares(int x, int y, int backup_start, int symmetric, int singles_n) 
 			}
 			active[y*order+x] = VALUE_O;
 			choose_cell(x, y, backup_start, symmetric, singles_n, VALUE_O, 1);
-			if (x <= y) {
-				restore_row(y, x, y, backup_start);
-			}
-			else {
-				restore_column(x, y, x-1, backup_start);
-			}
 		}
 		else {
 			fprintf(stderr, "This should never happen\n");
@@ -200,11 +194,11 @@ void dual_squares(int x, int y, int backup_start, int symmetric, int singles_n) 
 		if (active[y*order+x] < VALUE_ALL) {
 			if (x == x_switch && y == y_switch) {
 				flag_switch = 1;
-				choose_cell(x, y, backup_start, symmetric, singles_n, active[y*order+x], 0);
+				choose_cell(x, y, backup_start, symmetric, singles_n, active[y*order+x], 1);
 				flag_switch = 0;
 			}
 			else {
-				choose_cell(x, y, backup_start, symmetric, singles_n, active[y*order+x], 0);
+				choose_cell(x, y, backup_start, symmetric, singles_n, active[y*order+x], 1);
 			}
 		}
 		else if (active[y*order+x] == VALUE_ALL) {
@@ -266,17 +260,17 @@ void dual_squares(int x, int y, int backup_start, int symmetric, int singles_n) 
 					choose_cell(x, y, backup_start, symmetric, singles_n, VALUE_O, 1);
 				}
 			}
-			if (x <= y) {
-				restore_row(y, x, y, backup_start);
-			}
-			else {
-				restore_column(x, y, x-1, backup_start);
-			}
 		}
 		else {
 			fprintf(stderr, "This should never happen\n");
 			fflush(stderr);
 		}
+	}
+	if (x <= y) {
+		restore_row(y, x, y, backup_start);
+	}
+	else {
+		restore_column(x, y, x-1, backup_start);
 	}
 }
 
@@ -294,7 +288,6 @@ void backup_column(int x, int y_min, int y_max, int backup_start) {
 
 void evaluate_cell(int x, int y, int backup_start, int symmetric, int singles_n, int choice, score_t *total) {
 	if (x < y) {
-		int changes_sum, x_ref, backup_idx;
 		score_t score;
 		if (symmetric) {
 			if (choice < active[x*order+y]) {
@@ -304,21 +297,29 @@ void evaluate_cell(int x, int y, int backup_start, int symmetric, int singles_n,
 		}
 		set_score(total, 0, singles_n);
 		check_east_corner4(y, x, y, &score);
-		changes_sum = score.changes_n;
 		add_score(total, &score);
-		for (x_ref = x+1, backup_idx = backup_start+1; x_ref < y && changes_sum > 0 && total->singles_n <= singles_max; x_ref++, backup_idx++) {
-			if (active[y*order+x_ref] == VALUE_ALL) {
-				check_east_corner1(y, x_ref, y, &score);
-				changes_sum += score.changes_n;
-				total->changes_n += score.changes_n;
+		if (score.changes_n > 0) {
+			int changes_sum = score.changes_n, changes_sum_old, x_ref, backup_idx;
+			do {
+				changes_sum_old = changes_sum;
+				for (x_ref = x+1; x_ref < y; x_ref++) {
+					if (active[y*order+x_ref] == VALUE_ALL) {
+						check_east_corner1(y, x_ref, y, &score);
+						changes_sum += score.changes_n;
+						total->changes_n += score.changes_n;
+					}
+				}
 			}
-			if (active[y*order+x_ref] < backup[backup_idx]) {
-				changes_sum--;
-			}
-			if (active[y*order+x_ref] < VALUE_ALL) {
-				check_east_corner4(y, x_ref, y, &score);
-				changes_sum += score.changes_n;
-				add_score(total, &score);
+			while (changes_sum > changes_sum_old);
+			for (x_ref = x+1, backup_idx = backup_start+1; x_ref < y && changes_sum > 0 && total->singles_n <= singles_max; x_ref++, backup_idx++) {
+				if (active[y*order+x_ref] < backup[backup_idx]) {
+					changes_sum--;
+				}
+				if (active[y*order+x_ref] < VALUE_ALL) {
+					check_east_corner4(y, x_ref, y, &score);
+					changes_sum += score.changes_n;
+					add_score(total, &score);
+				}
 			}
 		}
 		if (total->singles_n > singles_max) {
@@ -326,25 +327,32 @@ void evaluate_cell(int x, int y, int backup_start, int symmetric, int singles_n,
 		}
 	}
 	else if (x-1 > y) {
-		int changes_sum, y_ref, backup_idx;
 		score_t score;
 		set_score(total, 0, singles_n);
 		check_south_corner4(x, y, x-1, &score);
-		changes_sum = score.changes_n;
 		add_score(total, &score);
-		for (y_ref = y+1, backup_idx = backup_start+1; y_ref < x-1 && changes_sum > 0 && total->singles_n <= singles_max; y_ref++, backup_idx++) {
-			if (active[y_ref*order+x] == VALUE_ALL) {
-				check_south_corner1(x, y_ref, x-1, &score);
-				changes_sum += score.changes_n;
-				total->changes_n += score.changes_n;
+		if (score.changes_n > 0) {
+			int changes_sum = score.changes_n, changes_sum_old, y_ref, backup_idx;
+			do {
+				changes_sum_old = changes_sum;
+				for (y_ref = y+1; y_ref < x-1; y_ref++) {
+					if (active[y_ref*order+x] == VALUE_ALL) {
+						check_south_corner1(x, y_ref, x-1, &score);
+						changes_sum += score.changes_n;
+						total->changes_n += score.changes_n;
+					}
+				}
 			}
-			if (active[y_ref*order+x] < backup[backup_idx]) {
-				changes_sum--;
-			}
-			if (active[y_ref*order+x] < VALUE_ALL) {
-				check_south_corner4(x, y_ref, x-1, &score);
-				changes_sum += score.changes_n;
-				add_score(total, &score);
+			while (changes_sum > changes_sum_old);
+			for (y_ref = y+1, backup_idx = backup_start+1; y_ref < x-1 && changes_sum > 0 && total->singles_n <= singles_max; y_ref++, backup_idx++) {
+				if (active[y_ref*order+x] < backup[backup_idx]) {
+					changes_sum--;
+				}
+				if (active[y_ref*order+x] < VALUE_ALL) {
+					check_south_corner4(x, y_ref, x-1, &score);
+					changes_sum += score.changes_n;
+					add_score(total, &score);
+				}
 			}
 		}
 		if (total->singles_n > singles_max) {
@@ -371,13 +379,19 @@ void choose_cell(int x, int y, int backup_start, int symmetric, int singles_n1, 
 		check_east_corner4(y, x, y, &score);
 		singles_n1 += score.singles_n;
 		singles_n2 = 0;
-		if (lookahead) {
-			int changes_sum = score.changes_n, x_ref, backup_idx;
-			for (x_ref = x+1, backup_idx = backup_start+1; x_ref < y && changes_sum > 0 && singles_n1+singles_n2 <= singles_max; x_ref++, backup_idx++) {
-				if (active[y*order+x_ref] == VALUE_ALL) {
-					check_east_corner1(y, x_ref, y, &score);
-					changes_sum += score.changes_n;
+		if (lookahead && score.changes_n > 0) {
+			int changes_sum = score.changes_n, changes_sum_old, x_ref, backup_idx;
+			do {
+				changes_sum_old = changes_sum;
+				for (x_ref = x+1; x_ref < y; x_ref++) {
+					if (active[y*order+x_ref] == VALUE_ALL) {
+						check_east_corner1(y, x_ref, y, &score);
+						changes_sum += score.changes_n;
+					}
 				}
+			}
+			while (changes_sum > changes_sum_old);
+			for (x_ref = x+1, backup_idx = backup_start+1; x_ref < y && changes_sum > 0 && singles_n1+singles_n2 <= singles_max; x_ref++, backup_idx++) {
 				if (active[y*order+x_ref] < backup[backup_idx]) {
 					changes_sum--;
 				}
@@ -398,13 +412,19 @@ void choose_cell(int x, int y, int backup_start, int symmetric, int singles_n1, 
 		check_south_corner4(x, y, x-1, &score);
 		singles_n1 += score.singles_n;
 		singles_n2 = 0;
-		if (lookahead) {
-			int changes_sum = score.changes_n, y_ref, backup_idx;
-			for (y_ref = y+1, backup_idx = backup_start+1; y_ref < x-1 && changes_sum > 0 && singles_n1+singles_n2 <= singles_max; y_ref++, backup_idx++) {
-				if (active[y_ref*order+x] == VALUE_ALL) {
-					check_south_corner1(x, y_ref, x-1, &score);
-					changes_sum += score.changes_n;
+		if (lookahead && score.changes_n > 0) {
+			int changes_sum = score.changes_n, changes_sum_old, y_ref, backup_idx;
+			do {
+				changes_sum_old = changes_sum;
+				for (y_ref = y+1; y_ref < x-1; y_ref++) {
+					if (active[y_ref*order+x] == VALUE_ALL) {
+						check_south_corner1(x, y_ref, x-1, &score);
+						changes_sum += score.changes_n;
+					}
 				}
+			}
+			while (changes_sum > changes_sum_old);
+			for (y_ref = y+1, backup_idx = backup_start+1; y_ref < x-1 && changes_sum > 0 && singles_n1+singles_n2 <= singles_max; y_ref++, backup_idx++) {
 				if (active[y_ref*order+x] < backup[backup_idx]) {
 					changes_sum--;
 				}
@@ -433,7 +453,7 @@ void check_east_corner4(int y_ref, int x_min, int x_max, score_t *total) {
 	for (x_min++; x_min <= x_max; x_min++, corner2 -= order, corner3 -= order-1, corner4++) {
 		int r = check_corner4(corner1, corner2, corner3, corner4);
 		score_t score;
-		set_score(&score, r & 1, (r & 2) >> 1);
+		set_score(&score, r & 1, (r & 2)/2);
 		add_score(total, &score);
 	}
 }
@@ -444,17 +464,17 @@ void check_south_corner4(int x_ref, int y_min, int y_max, score_t *total) {
 	for (y_min++; y_min <= y_max; y_min++, corner2--, corner3 += order-1, corner4 += order) {
 		int r = check_corner4(corner1, corner2, corner3, corner4);
 		score_t score;
-		set_score(&score, r & 1, (r & 2) >> 1);
+		set_score(&score, r & 1, (r & 2)/2);
 		add_score(total, &score);
 	}
 }
 
 int check_corner4(int *corner1, int *corner2, int *corner3, int *corner4) {
-	if (*corner1 == *corner2 && *corner2 == *corner3 && (*corner4 & *corner1)) {
-		if (*corner4 == *corner1) {
+	if (*corner1 == *corner2 && *corner2 == *corner3 && (*corner4 & *corner2)) {
+		if (*corner4 == *corner2) {
 			return 2;
 		}
-		*corner4 -= *corner1;
+		*corner4 -= *corner2;
 		return 1;
 	}
 	return 0;
@@ -466,7 +486,7 @@ void check_east_corner1(int y_ref, int x_min, int x_max, score_t *total) {
 	for (x_min++; x_min <= x_max && total->changes_n == 0; x_min++, corner2 -= order, corner3 -= order-1, corner4++) {
 		int r = check_corner1(corner1, corner2, corner3, corner4);
 		score_t score;
-		set_score(&score, r & 1, (r & 2) >> 1);
+		set_score(&score, r & 1, (r & 2)/2);
 		add_score(total, &score);
 	}
 }
@@ -477,7 +497,7 @@ void check_south_corner1(int x_ref, int y_min, int y_max, score_t *total) {
 	for (y_min++; y_min <= y_max && total->changes_n == 0; y_min++, corner2--, corner3 += order-1, corner4 += order) {
 		int r = check_corner1(corner1, corner2, corner3, corner4);
 		score_t score;
-		set_score(&score, r & 1, (r & 2) >> 1);
+		set_score(&score, r & 1, (r & 2)/2);
 		add_score(total, &score);
 	}
 }
