@@ -1,10 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <limits.h>
 
 #define COLORS_MIN 2
 #define BITS_N 8
 #define ORDER_MIN 2
+#define SIZE_T_MAX (size_t)-1
 #define ROT_CW_90 1
 #define ROT_CW_180 2
 #define ROT_CW_270 4
@@ -34,41 +36,51 @@ typedef struct {
 score_t;
 
 void erickson_matrix(int, int, int *, int, direction_t, int, int, int);
+void print_cell(int);
 void evaluate_cell(int, int, direction_t, int, int, score_t *);
 void choose_cell(int, int, int *, int, direction_t, int, int, int, int, int);
 void check_column(int, int, int, int *, score_t *);
 void check_row(int, int, int, int *, score_t *);
 int check_square(int *, int, int, int);
-void set_score(score_t *, int, int);
-void add_score(score_t *, score_t *);
-int compare_scores(score_t *, score_t *);
 void set_backup(backup_t *, int, int);
+void set_score(score_t *, int, int);
+void add_score(score_t *, int, int);
+int compare_scores(score_t *, score_t *);
 void restore_row(int, int, int);
 void restore_column(int, int, int);
-void next_cell(int *, int *, direction_t *);
-void print_cell(int);
 int set_choices(int, int *);
 int unique_choice(int);
 
-int colors_n, order, singles_max, counter_period, order_odd, format_len, *cells,counter1, counter2, x_switch, y_switch, flag_switch;
+int colors_n, order, singles_max, singles_switch, format_len, order_odd, *cells;
 unsigned time0;
 backup_t *backups;
+score_t *scores;
 
 int main(void) {
-	int colors_div, cells_size, x_first, y_first, cells_first, colors_all, colors_idx, cells_idx, *choices_all, symmetric;
-	if (scanf("%d%d%d%d", &colors_n, &order, &singles_max, &counter_period) != 4 || colors_n < COLORS_MIN || (size_t)colors_n >= sizeof(int)*BITS_N || order < ORDER_MIN || singles_max < 0 || counter_period < 1) {
+	int colors_div, cells_size, x_first, y_first, cells_first, colors_all, colors_idx, cells_idx, choices_all_size, *choices_all, backups_size;
+	if (scanf("%d%d%d%d", &colors_n, &order, &singles_max, &singles_switch) != 4 || colors_n < COLORS_MIN || (size_t)(colors_n+1) >= sizeof(int)*BITS_N || order < ORDER_MIN || order > INT_MAX-1 || singles_max < 0 || singles_max > INT_MAX-1 || singles_switch < 0 || singles_switch > singles_max) {
 		fprintf(stderr, "Invalid parameters\n");
 		fflush(stderr);
 		return EXIT_FAILURE;
 	}
+	for (colors_div = (colors_n-1)/10, format_len = 1; colors_div > 0; colors_div /= 10, format_len++);
 	if (order%2 == 0) {
 		order_odd = order+1;
 	}
 	else {
 		order_odd = order;
 	}
-	for (colors_div = (colors_n-1)/10, format_len = 1; colors_div > 0; colors_div /= 10, format_len++);
+	if (order_odd > INT_MAX/order_odd || (size_t)order_odd > SIZE_T_MAX/(size_t)order_odd) {
+		fprintf(stderr, "Could not set cells_size\n");
+		fflush(stderr);
+		return EXIT_FAILURE;
+	}
 	cells_size = order_odd*order_odd;
+	if ((size_t)cells_size > SIZE_T_MAX/sizeof(int)) {
+		fprintf(stderr, "Could not set cells size\n");
+		fflush(stderr);
+		return EXIT_FAILURE;
+	}
 	cells = malloc(sizeof(int)*(size_t)cells_size);
 	if (!cells) {
 		fprintf(stderr, "Could not allocate memory for cells\n");
@@ -89,14 +101,35 @@ int main(void) {
 	for (cells_idx++; cells_idx < cells_size; cells_idx++) {
 		cells[cells_idx] = colors_all;
 	}
-	choices_all = malloc(sizeof(int)*(size_t)(colors_n*cells_size));
+	if (cells_size > INT_MAX/colors_n || (size_t)cells_size > SIZE_T_MAX/(size_t)colors_n) {
+		fprintf(stderr, "Could not set choices_all_size\n");
+		fflush(stderr);
+		free(cells);
+		return EXIT_FAILURE;
+	}
+	choices_all_size = colors_n*cells_size;
+	if ((size_t)choices_all_size > SIZE_T_MAX/sizeof(int)) {
+		fprintf(stderr, "Could not set choices_all size\n");
+		fflush(stderr);
+		free(cells);
+		return EXIT_FAILURE;
+	}
+	choices_all = malloc(sizeof(int)*(size_t)choices_all_size);
 	if (!choices_all) {
 		fprintf(stderr, "Could not allocate memory for choices_all\n");
 		fflush(stderr);
 		free(cells);
 		return EXIT_FAILURE;
 	}
-	backups = malloc(sizeof(backup_t)*(size_t)((colors_n-1)*cells_size));
+	backups_size = (colors_n-1)*cells_size;
+	if ((size_t)backups_size > SIZE_T_MAX/sizeof(backup_t)) {
+		fprintf(stderr, "Could not set backups size\n");
+		fflush(stderr);
+		free(choices_all);
+		free(cells);
+		return EXIT_FAILURE;
+	}
+	backups = malloc(sizeof(backup_t)*(size_t)backups_size);
 	if (!backups) {
 		fprintf(stderr, "Could not allocate memory for backups\n");
 		fflush(stderr);
@@ -104,32 +137,22 @@ int main(void) {
 		free(cells);
 		return EXIT_FAILURE;
 	}
-	counter1 = 0;
-	counter2 = 0;
+	scores = malloc(sizeof(score_t)*(size_t)colors_n);
+	if (!scores) {
+		fprintf(stderr, "Could not allocate memory for scores\n");
+		fflush(stderr);
+		free(backups);
+		free(choices_all);
+		free(cells);
+		return EXIT_FAILURE;
+	}
+	singles_max++;
+	singles_switch++;
 	time0 = (unsigned)time(NULL);
-	symmetric = ROT_CW_90+ROT_CW_180+ROT_CW_270+REF_AXIS_H+REF_AXIS_V+REF_DIAG_UB+REF_DIAG_BU;
-	if (singles_max == 0) {
-		erickson_matrix(x_first, y_first-1, choices_all, symmetric, WEST, 0, 2, 0);
-	}
-	else {
-		direction_t direction_switch = NORTH;
-		x_switch = x_first;
-		y_switch = y_first;
-		flag_switch = 1;
-		printf("x_switch %d y_switch %d\n", x_switch, y_switch);
-		fflush(stdout);
-		erickson_matrix(x_first, y_first-1, choices_all, symmetric, WEST, 0, 2, 0);
-		flag_switch = 0;
-		next_cell(&x_switch, &y_switch, &direction_switch);
-		while (y_switch >= 0 && y_switch < order) {
-			printf("x_switch %d y_switch %d\n", x_switch, y_switch);
-			fflush(stdout);
-			erickson_matrix(x_first, y_first-1, choices_all, symmetric, WEST, 0, 2, 0);
-			next_cell(&x_switch, &y_switch, &direction_switch);
-		}
-	}
-	printf("Solutions %d*%d+%d Time %us\n", counter2, counter_period, counter1, (unsigned)time(NULL)-time0);
+	erickson_matrix(x_first, y_first-1, choices_all, ROT_CW_90+ROT_CW_180+ROT_CW_270+REF_AXIS_H+REF_AXIS_V+REF_DIAG_UB+REF_DIAG_BU, WEST, 0, 2, 0);
+	printf("Total time %us\n", (unsigned)time(NULL)-time0);
 	fflush(stdout);
+	free(scores);
 	free(backups);
 	free(choices_all);
 	free(cells);
@@ -137,188 +160,111 @@ int main(void) {
 }
 
 void erickson_matrix(int x, int y, int *choices, int symmetric, direction_t direction, int backups_lo, int colors_max, int singles_n) {
-	int choices_n, choices_idx;
+	int choices_n;
 	if (y == -1 || y == order) {
-		counter1++;
-		if (counter1 == counter_period) {
-			counter1 = 0;
-			counter2++;
-			printf("Solutions %d*%d Time %us\n", counter2, counter_period, (unsigned)time(NULL)-time0);
-			fflush(stdout);
+		int y_cur;
+		singles_max = singles_n;
+		if (singles_switch > singles_max) {
+			singles_switch = singles_max;
 		}
-		if (singles_n < singles_max || (counter1 == 1 && counter2 == 0)) {
-			int y_cur;
-			printf("Singles %d Time %us\n", singles_n, (unsigned)time(NULL)-time0);
-			if (singles_n < singles_max) {
-				singles_max = singles_n;
+		printf("Singles %d Time %us\n", singles_max, (unsigned)time(NULL)-time0);
+		for (y_cur = 0; y_cur < order; y_cur++) {
+			int x_cur;
+			print_cell(cells[y_cur*order_odd]);
+			for (x_cur = 1; x_cur < order; x_cur++) {
+				putchar(' ');
+				print_cell(cells[y_cur*order_odd+x_cur]);
 			}
-			for (y_cur = 0; y_cur < order; y_cur++) {
-				int x_cur;
-				print_cell(cells[y_cur*order_odd]);
-				for (x_cur = 1; x_cur < order; x_cur++) {
-					putchar(' ');
-					print_cell(cells[y_cur*order_odd+x_cur]);
-				}
-				puts("");
-			}
-			fflush(stdout);
+			puts("");
 		}
+		fflush(stdout);
 		return;
 	}
 	choices_n = set_choices(cells[y*order_odd+x], choices);
-	if (singles_max == 0) {
-		if (choices_n == 1) {
-			if (choices[0] == colors_max-1 && colors_max < colors_n) {
-				choose_cell(x, y, choices, symmetric, direction, backups_lo, colors_max+1, singles_n, cells[y*order_odd+x], 0);
-			}
-			else {
-				choose_cell(x, y, choices, symmetric, direction, backups_lo, colors_max, singles_n, cells[y*order_odd+x], 0);
-			}
+	if (choices_n == 1) {
+		if (choices[0] == colors_max-1 && colors_max < colors_n) {
+			choose_cell(x, y, choices, symmetric, direction, backups_lo, colors_max+1, singles_n, cells[y*order_odd+x], 0);
 		}
 		else {
-			switch (direction) {
-				case NORTH:
-				case SOUTH:
-					set_backup(backups+backups_lo, y, cells[y*order_odd+x]);
-					break;
-				case WEST:
-				case EAST:
-					set_backup(backups+backups_lo, x, cells[y*order_odd+x]);
-					break;
-				default:
-					fprintf(stderr, "This should never happen\n");
-					fflush(stderr);
-					return;
-			}
-			for (choices_idx = 0; choices_idx < choices_n && choices[choices_idx] < colors_max; choices_idx++) {
-				cells[y*order_odd+x] = 1 << choices[choices_idx];
-				if (choices[choices_idx] == colors_max-1 && colors_max < colors_n) {
-					choose_cell(x, y, choices, symmetric, direction, backups_lo, colors_max+1, singles_n, cells[y*order_odd+x], 1);
-				}
-				else {
-					choose_cell(x, y, choices, symmetric, direction, backups_lo, colors_max, singles_n, cells[y*order_odd+x], 1);
-				}
-			}
-			switch (direction) {
-				case NORTH:
-				case SOUTH:
-					restore_column(x, backups_lo, backups_lo+1);
-					break;
-				case WEST:
-				case EAST:
-					restore_row(y, backups_lo, backups_lo+1);
-					break;
-				default:
-					fprintf(stderr, "This should never happen\n");
-					fflush(stderr);
-			}
+			choose_cell(x, y, choices, symmetric, direction, backups_lo, colors_max, singles_n, cells[y*order_odd+x], 0);
 		}
 	}
 	else {
-		if (choices_n == 1) {
-			if (x != x_switch || y != y_switch) {
-				if (flag_switch) {
-					symmetric = 0;
-				}
-				if (choices[0] == colors_max-1 && colors_max < colors_n) {
-					choose_cell(x, y, choices, symmetric, direction, backups_lo, colors_max+1, singles_n, cells[y*order_odd+x], 0);
-				}
-				else {
-					choose_cell(x, y, choices, symmetric, direction, backups_lo, colors_max, singles_n, cells[y*order_odd+x], 0);
-				}
-			}
+		int choices_hi, choices_idx1;
+		switch (direction) {
+			case NORTH:
+			case SOUTH:
+				set_backup(backups+backups_lo, y, cells[y*order_odd+x]);
+				break;
+			case WEST:
+			case EAST:
+				set_backup(backups+backups_lo, x, cells[y*order_odd+x]);
+				break;
+			default:
+				fprintf(stderr, "This should never happen\n");
+				fflush(stderr);
+				return;
 		}
-		else {
-			switch (direction) {
-				case NORTH:
-				case SOUTH:
-					set_backup(backups+backups_lo, y, cells[y*order_odd+x]);
-					break;
-				case WEST:
-				case EAST:
-					set_backup(backups+backups_lo, x, cells[y*order_odd+x]);
-					break;
-				default:
-					fprintf(stderr, "This should never happen\n");
-					fflush(stderr);
-					return;
+		for (choices_hi = 0; choices_hi < choices_n && choices[choices_hi] < colors_max; choices_hi++) {
+			cells[y*order_odd+x] = 1 << choices[choices_hi];
+			evaluate_cell(x, y, direction, backups_lo, singles_n, scores+choices_hi);
+		}
+		for (choices_idx1 = 1; choices_idx1 < choices_hi; choices_idx1++) {
+			int choice = choices[choices_idx1], choices_idx2 = choices_idx1;
+			score_t score = scores[choices_idx1];
+			while (choices_idx2 > 0 && compare_scores(scores+choices_idx2-1, &score) > 0) {
+				choices[choices_idx2] = choices[choices_idx2-1];
+				scores[choices_idx2] = scores[choices_idx2-1];
+				choices_idx2--;
 			}
-			if (x == x_switch && y == y_switch) {
-				flag_switch = 1;
-			}
-			if (flag_switch) {
-				int choice = choices[0];
-				score_t score_min;
-				cells[y*order_odd+x] = 1 << choices[0];
-				evaluate_cell(x, y, direction, backups_lo, singles_n, &score_min);
-				for (choices_idx = 1; choices_idx < choices_n && choices[choices_idx] < colors_max; choices_idx++) {
-					score_t score;
-					cells[y*order_odd+x] = 1 << choices[choices_idx];
-					evaluate_cell(x, y, direction, backups_lo, singles_n, &score);
-					if (compare_scores(&score, &score_min) <= 0) {
-						choice = choices[choices_idx];
-						score_min = score;
-					}
-				}
-				if (score_min.singles_n <= singles_max) {
-					if (x == x_switch && y == y_switch) {
-						for (choices_idx = 0; choices_idx < choices_n && choices[choices_idx] < colors_max; choices_idx++) {
-							if (choices[choices_idx] != choice) {
-								cells[y*order_odd+x] = 1 << choices[choices_idx];
-								if (choices[choices_idx] == colors_max-1 && colors_max < colors_n) {
-									choose_cell(x, y, choices, 0, direction, backups_lo, colors_max+1, singles_n, cells[y*order_odd+x], 1);
-								}
-								else {
-									choose_cell(x, y, choices, 0, direction, backups_lo, colors_max, singles_n, cells[y*order_odd+x], 1);
-								}
-							}
-						}
-					}
-					else {
-						cells[y*order_odd+x] = 1 << choice;
-						if (choice == colors_max-1 && colors_max < colors_n) {
-							choose_cell(x, y, choices, 0, direction, backups_lo, colors_max+1, singles_n, cells[y*order_odd+x], 1);
-						}
-						else {
-							choose_cell(x, y, choices, 0, direction, backups_lo, colors_max, singles_n, cells[y*order_odd+x], 1);
-						}
-					}
-				}
+			choices[choices_idx2] = choice;
+			scores[choices_idx2] = score;
+		}
+		while (choices_hi > 0 && scores[choices_hi-1].singles_n >= singles_max) {
+			choices_hi--;
+		}
+		for (choices_idx1 = 0; choices_idx1 < choices_hi; choices_idx1++) {
+			cells[y*order_odd+x] = 1 << choices[choices_idx1];
+			if (choices[choices_idx1] == colors_max-1 && colors_max < colors_n) {
+				choose_cell(x, y, choices, symmetric, direction, backups_lo, colors_max+1, singles_n, cells[y*order_odd+x], 1);
 			}
 			else {
-				for (choices_idx = 0; choices_idx < choices_n && choices[choices_idx] < colors_max; choices_idx++) {
-					cells[y*order_odd+x] = 1 << choices[choices_idx];
-					if (choices[choices_idx] == colors_max-1 && colors_max < colors_n) {
-						choose_cell(x, y, choices, symmetric, direction, backups_lo, colors_max+1, singles_n, cells[y*order_odd+x], 1);
-					}
-					else {
-						choose_cell(x, y, choices, symmetric, direction, backups_lo, colors_max, singles_n, cells[y*order_odd+x], 1);
-					}
-				}
+				choose_cell(x, y, choices, symmetric, direction, backups_lo, colors_max, singles_n, cells[y*order_odd+x], 1);
 			}
-			if (x == x_switch && y == y_switch) {
-				flag_switch = 0;
-			}
-			switch (direction) {
-				case NORTH:
-				case SOUTH:
-					restore_column(x, backups_lo, backups_lo+1);
-					break;
-				case WEST:
-				case EAST:
-					restore_row(y, backups_lo, backups_lo+1);
-					break;
-				default:
-					fprintf(stderr, "This should never happen\n");
-					fflush(stderr);
+			if (singles_n >= singles_switch) {
+				break;
 			}
 		}
+		switch (direction) {
+			case NORTH:
+			case SOUTH:
+				restore_column(x, backups_lo, backups_lo+1);
+				break;
+			case WEST:
+			case EAST:
+				restore_row(y, backups_lo, backups_lo+1);
+				break;
+			default:
+				fprintf(stderr, "This should never happen\n");
+				fflush(stderr);
+		}
+	}
+}
+
+void print_cell(int cell) {
+	int choice = unique_choice(cell);
+	if (choice < colors_n) {
+		printf("%0*d", format_len, choice);
+	}
+	else {
+		fprintf(stderr, "This should never happen\n");
+		fflush(stderr);
 	}
 }
 
 void evaluate_cell(int x, int y, direction_t direction, int backups_lo, int singles_n, score_t *total) {
 	switch (direction) {
-		int backups_hi, y_min, y_ref, x_ref;
+		int backups_hi, y_min, ref;
 		score_t score;
 		case NORTH:
 			backups_hi = backups_lo+1;
@@ -329,48 +275,36 @@ void evaluate_cell(int x, int y, direction_t direction, int backups_lo, int sing
 			else {
 				y_min = order-2-x;
 			}
-			for (y_ref = y-1; y_ref >= y_min && total->singles_n <= singles_max; y_ref--) {
-				check_column(x, y_ref, backups_lo, &backups_hi, &score);
-				add_score(total, &score);
-			}
-			if (total->singles_n > singles_max) {
-				set_score(total, 0, singles_max+1);
+			for (ref = y-1; ref >= y_min && total->singles_n < singles_max; ref--) {
+				check_column(x, ref, backups_lo, &backups_hi, &score);
+				add_score(total, score.changes_n, score.singles_n);
 			}
 			restore_column(x, backups_lo+1, backups_hi);
 			break;
 		case WEST:
 			backups_hi = backups_lo+1;
 			set_score(total, 0, singles_n);
-			for (x_ref = x-1; x_ref >= y && total->singles_n <= singles_max; x_ref--) {
-				check_row(y, x_ref, backups_lo, &backups_hi, &score);
-				add_score(total, &score);
-			}
-			if (total->singles_n > singles_max) {
-				set_score(total, 0, singles_max+1);
+			for (ref = x-1; ref >= y && total->singles_n < singles_max; ref--) {
+				check_row(y, ref, backups_lo, &backups_hi, &score);
+				add_score(total, score.changes_n, score.singles_n);
 			}
 			restore_row(y, backups_lo+1, backups_hi);
 			break;
 		case SOUTH:
 			backups_hi = backups_lo+1;
 			set_score(total, 0, singles_n);
-			for (y_ref = y+1; y_ref <= order_odd-1-x && total->singles_n <= singles_max; y_ref++) {
-				check_column(x, y_ref, backups_lo, &backups_hi, &score);
-				add_score(total, &score);
-			}
-			if (total->singles_n > singles_max) {
-				set_score(total, 0, singles_max+1);
+			for (ref = y+1; ref <= order_odd-1-x && total->singles_n < singles_max; ref++) {
+				check_column(x, ref, backups_lo, &backups_hi, &score);
+				add_score(total, score.changes_n, score.singles_n);
 			}
 			restore_column(x, backups_lo+1, backups_hi);
 			break;
 		case EAST:
 			backups_hi = backups_lo+1;
 			set_score(total, 0, singles_n);
-			for (x_ref = x+1; x_ref <= y && total->singles_n <= singles_max; x_ref++) {
-				check_row(y, x_ref, backups_lo, &backups_hi, &score);
-				add_score(total, &score);
-			}
-			if (total->singles_n > singles_max) {
-				set_score(total, 0, singles_max+1);
+			for (ref = x+1; ref <= y && total->singles_n < singles_max; ref++) {
+				check_row(y, ref, backups_lo, &backups_hi, &score);
+				add_score(total, score.changes_n, score.singles_n);
 			}
 			restore_row(y, backups_lo+1, backups_hi);
 			break;
@@ -383,145 +317,187 @@ void evaluate_cell(int x, int y, direction_t direction, int backups_lo, int sing
 void choose_cell(int x, int y, int *choices, int symmetric, direction_t direction, int backups_lo, int colors_max, int singles_n, int choice, int lookahead) {
 	direction_t direction_bak;
 	if (symmetric) {
-		int x_opp = order_odd-1-x, y_opp = order_odd-1-y, cell_rot_cw_90 = cells[x*order_odd+y_opp], cell_rot_cw_180 = cells[y_opp*order_odd+x_opp], cell_rot_cw_270 = cells[x_opp*order_odd+y], cell_ref_axis_h = cells[y_opp*order_odd+x], cell_ref_axis_v = cells[y*order_odd+x_opp], cell_ref_diag_ub = cells[x*order_odd+y], cell_ref_diag_bu = cells[x_opp*order_odd+y_opp];
-		if ((symmetric & ROT_CW_90) && unique_choice(cell_rot_cw_90) == 1) {
-			if (choice < cell_rot_cw_90) {
-				return;
-			}
-			if (choice > cell_rot_cw_90) {
-				symmetric -= ROT_CW_90;
-			}
-		}
-		if ((symmetric & ROT_CW_180) && unique_choice(cell_rot_cw_180) == 1) {
-			if (choice < cell_rot_cw_180) {
-				return;
-			}
-			if (choice > cell_rot_cw_180) {
-				symmetric -= ROT_CW_180;
+		int x_opp = order_odd-1-x, y_opp = order_odd-1-y, cell;
+		if (symmetric & ROT_CW_90) {
+			cell = cells[x*order_odd+y_opp];
+			if (unique_choice(cell) < colors_n) {
+				if (choice < cell) {
+					return;
+				}
+				if (choice > cell) {
+					symmetric -= ROT_CW_90;
+				}
 			}
 		}
-		if ((symmetric & ROT_CW_270) && unique_choice(cell_rot_cw_270) == 1) {
-			if (choice < cell_rot_cw_270) {
-				return;
-			}
-			if (choice > cell_rot_cw_270) {
-				symmetric -= ROT_CW_270;
-			}
-		}
-		if ((symmetric & REF_AXIS_H) && unique_choice(cell_ref_axis_h) == 1) {
-			if (choice < cell_ref_axis_h) {
-				return;
-			}
-			if (choice > cell_ref_axis_h) {
-				symmetric -= REF_AXIS_H;
+		if (symmetric & ROT_CW_180) {
+			cell = cells[y_opp*order_odd+x_opp];
+			if (unique_choice(cell) < colors_n) {
+				if (choice < cell) {
+					return;
+				}
+				if (choice > cell) {
+					symmetric -= ROT_CW_180;
+				}
 			}
 		}
-		if ((symmetric & REF_AXIS_V) && unique_choice(cell_ref_axis_v) == 1) {
-			if (choice < cell_ref_axis_v) {
-				return;
-			}
-			if (choice > cell_ref_axis_v) {
-				symmetric -= REF_AXIS_V;
-			}
-		}
-		if ((symmetric & REF_DIAG_UB) && unique_choice(cell_ref_diag_ub) == 1) {
-			if (choice < cell_ref_diag_ub) {
-				return;
-			}
-			if (choice > cell_ref_diag_ub) {
-				symmetric -= REF_DIAG_UB;
+		if (symmetric & ROT_CW_270) {
+			cell = cells[x_opp*order_odd+y];
+			if (unique_choice(cell) < colors_n) {
+				if (choice < cell) {
+					return;
+				}
+				if (choice > cell) {
+					symmetric -= ROT_CW_270;
+				}
 			}
 		}
-		if ((symmetric & REF_DIAG_BU) && unique_choice(cell_ref_diag_bu) == 1) {
-			if (choice < cell_ref_diag_bu) {
-				return;
+		if (symmetric & REF_AXIS_H) {
+			cell = cells[y_opp*order_odd+x];
+			if (unique_choice(cell) < colors_n) {
+				if (choice < cell) {
+					return;
+				}
+				if (choice > cell) {
+					symmetric -= REF_AXIS_H;
+				}
 			}
-			if (choice > cell_ref_diag_bu) {
-				symmetric -= REF_DIAG_BU;
+		}
+		if (symmetric & REF_AXIS_V) {
+			cell = cells[y*order_odd+x_opp];
+			if (unique_choice(cell) < colors_n) {
+				if (choice < cell) {
+					return;
+				}
+				if (choice > cell) {
+					symmetric -= REF_AXIS_V;
+				}
+			}
+		}
+		if (symmetric & REF_DIAG_UB) {
+			cell = cells[x*order_odd+y];
+			if (unique_choice(cell) < colors_n) {
+				if (choice < cell) {
+					return;
+				}
+				if (choice > cell) {
+					symmetric -= REF_DIAG_UB;
+				}
+			}
+		}
+		if (symmetric & REF_DIAG_BU) {
+			cell = cells[x_opp*order_odd+y_opp];
+			if (unique_choice(cell) < colors_n) {
+				if (choice < cell) {
+					return;
+				}
+				if (choice > cell) {
+					symmetric -= REF_DIAG_BU;
+				}
 			}
 		}
 	}
 	direction_bak = direction;
-	switch (direction_bak) {
-		case NORTH:
-			if (lookahead) {
-				int backups_hi = backups_lo+1, y_ref;
-				score_t score;
-				for (y_ref = y-1; y_ref >= order_odd-1-x && singles_n <= singles_max; y_ref--) {
-					check_column(x, y_ref, backups_lo, &backups_hi, &score);
+	if (lookahead) {
+		switch (direction_bak) {
+			int backups_hi, ref;
+			score_t score;
+			case NORTH:
+				backups_hi = backups_lo+1;
+				for (ref = y-1; ref >= order_odd-1-x && singles_n < singles_max; ref--) {
+					check_column(x, ref, backups_lo, &backups_hi, &score);
 					singles_n += score.singles_n;
 				}
-				if (singles_n <= singles_max) {
-					next_cell(&x, &y, &direction);
+				if (singles_n < singles_max) {
+					y--;
+					if (order_odd-2-x == y) {
+						direction = WEST;
+					}
 					erickson_matrix(x, y, choices+colors_n, symmetric, direction, backups_hi, colors_max, singles_n);
 				}
 				restore_column(x, backups_lo+1, backups_hi);
-			}
-			else {
-				next_cell(&x, &y, &direction);
-				erickson_matrix(x, y, choices+colors_n, symmetric, direction, backups_lo, colors_max, singles_n);
-			}
-			break;
-		case WEST:
-			if (lookahead) {
-				int backups_hi = backups_lo+1, x_ref;
-				score_t score;
-				for (x_ref = x-1; x_ref >= y && singles_n <= singles_max; x_ref--) {
-					check_row(y, x_ref, backups_lo, &backups_hi, &score);
+				break;
+			case WEST:
+				backups_hi = backups_lo+1;
+				for (ref = x-1; ref >= y && singles_n < singles_max; ref--) {
+					check_row(y, ref, backups_lo, &backups_hi, &score);
 					singles_n += score.singles_n;
 				}
-				if (singles_n <= singles_max) {
-					next_cell(&x, &y, &direction);
+				if (singles_n < singles_max) {
+					x--;
+					if (x == y) {
+						direction = SOUTH;
+					}
 					erickson_matrix(x, y, choices+colors_n, symmetric, direction, backups_hi, colors_max, singles_n);
 				}
 				restore_row(y, backups_lo+1, backups_hi);
-			}
-			else {
-				next_cell(&x, &y, &direction);
-				erickson_matrix(x, y, choices+colors_n, symmetric, direction, backups_lo, colors_max, singles_n);
-			}
-			break;
-		case SOUTH:
-			if (lookahead) {
-				int backups_hi = backups_lo+1, y_ref;
-				score_t score;
-				for (y_ref = y+1; y_ref <= order_odd-1-x && singles_n <= singles_max; y_ref++) {
-					check_column(x, y_ref, backups_lo, &backups_hi, &score);
+				break;
+			case SOUTH:
+				backups_hi = backups_lo+1;
+				for (ref = y+1; ref <= order_odd-1-x && singles_n < singles_max; ref++) {
+					check_column(x, ref, backups_lo, &backups_hi, &score);
 					singles_n += score.singles_n;
 				}
-				if (singles_n <= singles_max) {
-					next_cell(&x, &y, &direction);
+				if (singles_n < singles_max) {
+					y++;
+					if (x == order_odd-1-y) {
+						direction = EAST;
+					}
 					erickson_matrix(x, y, choices+colors_n, symmetric, direction, backups_hi, colors_max, singles_n);
 				}
 				restore_column(x, backups_lo+1, backups_hi);
-			}
-			else {
-				next_cell(&x, &y, &direction);
-				erickson_matrix(x, y, choices+colors_n, symmetric, direction, backups_lo, colors_max, singles_n);
-			}
-			break;
-		case EAST:
-			if (lookahead) {
-				int backups_hi = backups_lo+1, x_ref;
-				score_t score;
-				for (x_ref = x+1; x_ref <= y && singles_n <= singles_max; x_ref++) {
-					check_row(y, x_ref, backups_lo, &backups_hi, &score);
+				break;
+			case EAST:
+				backups_hi = backups_lo+1;
+				for (ref = x+1; ref <= y && singles_n < singles_max; ref++) {
+					check_row(y, ref, backups_lo, &backups_hi, &score);
 					singles_n += score.singles_n;
 				}
-				if (singles_n <= singles_max) {
-					next_cell(&x, &y, &direction);
+				if (singles_n < singles_max) {
+					x++;
+					if (x == y) {
+						direction = NORTH;
+					}
 					erickson_matrix(x, y, choices+colors_n, symmetric, direction, backups_hi, colors_max, singles_n);
 				}
 				restore_row(y, backups_lo+1, backups_hi);
-			}
-			else {
-				next_cell(&x, &y, &direction);
-				erickson_matrix(x, y, choices+colors_n, symmetric, direction, backups_lo, colors_max, singles_n);
-			}
-			break;
-		default:
-			fprintf(stderr, "This should never happen\n");
-			fflush(stderr);
+				break;
+			default:
+				fprintf(stderr, "This should never happen\n");
+				fflush(stderr);
+		}
+	}
+	else {
+		switch (direction_bak) {
+			case NORTH:
+				y--;
+				if (order_odd-2-x == y) {
+					direction = WEST;
+				}
+				break;
+			case WEST:
+				x--;
+				if (x == y) {
+					direction = SOUTH;
+				}
+				break;
+			case SOUTH:
+				y++;
+				if (x == order_odd-1-y) {
+					direction = EAST;
+				}
+				break;
+			case EAST:
+				x++;
+				if (x == y) {
+					direction = NORTH;
+				}
+				break;
+			default:
+				fprintf(stderr, "This should never happen\n");
+				fflush(stderr);
+				return;
+		}
+		erickson_matrix(x, y, choices+colors_n, symmetric, direction, backups_lo, colors_max, singles_n);
 	}
 }
 
@@ -529,11 +505,10 @@ void check_column(int x_ref, int y_ref, int backups_lo, int *backups_hi, score_t
 	int *corner1 = cells+y_ref*order_odd+x_ref;
 	set_backup(backups+*backups_hi, y_ref, *corner1);
 	set_score(total, 0, 0);
-	for (; backups_lo < *backups_hi; backups_lo++) {
+	while (backups_lo < *backups_hi) {
 		int y_check = backups[backups_lo].pos, x_check = x_ref+y_ref-y_check, r = check_square(corner1, cells[y_ref*order_odd+x_check], cells[y_check*order_odd+x_check], cells[y_check*order_odd+x_ref]);
-		score_t score;
-		set_score(&score, r & 1, (r & 2) >> 1);
-		add_score(total, &score);
+		add_score(total, r & 1, (r & 2) >> 1);
+		backups_lo++;
 	}
 	if (total->changes_n > 0) {
 		*backups_hi += 1;
@@ -544,11 +519,10 @@ void check_row(int y_ref, int x_ref, int backups_lo, int *backups_hi, score_t *t
 	int *corner1 = cells+y_ref*order_odd+x_ref;
 	set_backup(backups+*backups_hi, x_ref, *corner1);
 	set_score(total, 0, 0);
-	for (; backups_lo < *backups_hi; backups_lo++) {
+	while (backups_lo < *backups_hi) {
 		int x_check = backups[backups_lo].pos, y_check = y_ref-x_ref+x_check, r = check_square(corner1, cells[y_check*order_odd+x_ref], cells[y_check*order_odd+x_check], cells[y_ref*order_odd+x_check]);
-		score_t score;
-		set_score(&score, r & 1, (r & 2) >> 1);
-		add_score(total, &score);
+		add_score(total, r & 1, (r & 2) >> 1);
+		backups_lo++;
 	}
 	if (total->changes_n > 0) {
 		*backups_hi += 1;
@@ -566,14 +540,19 @@ int check_square(int *corner1, int corner2, int corner3, int corner4) {
 	return 0;
 }
 
+void set_backup(backup_t *backup, int pos, int cell) {
+	backup->pos = pos;
+	backup->cell = cell;
+}
+
 void set_score(score_t *score, int changes_n, int singles_n) {
 	score->changes_n = changes_n;
 	score->singles_n = singles_n;
 }
 
-void add_score(score_t *total, score_t *score) {
-	total->changes_n += score->changes_n;
-	total->singles_n += score->singles_n;
+void add_score(score_t *total, int changes_n, int singles_n) {
+	total->changes_n += changes_n;
+	total->singles_n += singles_n;
 }
 
 int compare_scores(score_t *score_a, score_t *score_b) {
@@ -583,65 +562,17 @@ int compare_scores(score_t *score_a, score_t *score_b) {
 	return score_a->changes_n-score_b->changes_n;
 }
 
-void set_backup(backup_t *backup, int pos, int cell) {
-	backup->pos = pos;
-	backup->cell = cell;
-}
-
 void restore_row(int y, int backups_lo, int backups_hi) {
-	for (; backups_lo < backups_hi; backups_lo++) {
+	while (backups_lo < backups_hi) {
 		cells[y*order_odd+backups[backups_lo].pos] = backups[backups_lo].cell;
+		backups_lo++;
 	}
 }
 
 void restore_column(int x, int backups_lo, int backups_hi) {
-	for (; backups_lo < backups_hi; backups_lo++) {
+	while (backups_lo < backups_hi) {
 		cells[backups[backups_lo].pos*order_odd+x] = backups[backups_lo].cell;
-	}
-}
-
-void next_cell(int *x, int *y, direction_t *direction) {
-	direction_t direction_bak = *direction;
-	switch (direction_bak) {
-		case NORTH:
-			*y -= 1;
-			if (order_odd-2-*x == *y) {
-				*direction = WEST;
-			}
-			break;
-		case WEST:
-			*x -= 1;
-			if (*x == *y) {
-				*direction = SOUTH;
-			}
-			break;
-		case SOUTH:
-			*y += 1;
-			if (*x == order_odd-1-*y) {
-				*direction = EAST;
-			}
-			break;
-		case EAST:
-			*x += 1;
-			if (*x == *y) {
-				*direction = NORTH;
-			}
-			break;
-		default:
-			fprintf(stderr, "This should never happen\n");
-			fflush(stderr);
-	}
-}
-
-void print_cell(int cell) {
-	if (unique_choice(cell) == 1) {
-		int choice;
-		set_choices(cell, &choice);
-		printf("%0*d", format_len, choice);
-	}
-	else {
-		fprintf(stderr, "This should never happen\n");
-		fflush(stderr);
+		backups_lo++;
 	}
 }
 
@@ -656,11 +587,10 @@ int set_choices(int cell, int *choices) {
 }
 
 int unique_choice(int cell) {
-	int choices_n = 0, colors_idx, weight;
-	for (colors_idx = 0, weight = 1; colors_idx < colors_n && choices_n < 2; colors_idx++, weight <<= 1) {
-		if (cell & weight) {
-			choices_n++;
-		}
+	int colors_idx, weight;
+	for (colors_idx = 0, weight = 1; weight < cell; colors_idx++, weight <<= 1);
+	if (weight == cell) {
+		return colors_idx;
 	}
-	return choices_n == 1;
+	return colors_n;
 }
