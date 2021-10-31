@@ -7,8 +7,8 @@ The program dual_squares is the inital solution for the challenge. It reads 3 pa
 - Maximum number of single squares (>= 0)
 - Period of solutions counter display (>= 1)
 
-The program erickson_matrix is an evolution that can manage more than 2 colors. It is implementing a spiral out scan of the grid and enhanced symmetry management that allows to do a full search for 2 colors and order = 15 in 2h40m on my current desktop computer. It reads 4 parameters on standard input:
+The program erickson_matrix is an evolution that can manage more than 2 colors. It is implementing a spiral out scan of the grid and enhanced symmetry management that allows to prove there is no solution with 0 single squares for 2 colors and order = 15 in 4h15m on my current desktop computer. It reads 4 parameters on standard input:
 - Number of colors (>= 2)
 - Order (>= 2)
 - Maximum number of single squares (>= 0)
-- Period of solutions counter display (>= 1)
+- Number of single squares after which the program tries only one color per cell (>= 0, <= Maximum number of single squares)
